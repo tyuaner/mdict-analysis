@@ -2,20 +2,25 @@
 import zlib
 import csv
 import os
+import re
+from readmdict import MDX, MDD
 
 
-def write_indexed_data(items, directory):
+def generate_indexed_data(mdict_path):
     """
-    将键值对数据写入压缩文件和索引 CSV 文件。
-    :param items: 包含 (key, value) 对的迭代器，value 应该是已编码的字符串。
-    :param directory: 存储 index.csv 和 data.bin 文件的目录路径。
+     将词典文件转换为索引文件和数据文件。索引文件使用 CSV 格式，数据文件使用二进制格式。
+     索引文件包含词典中的每个键的元数据，包括键、偏移量和长度。数据文件包含词典中的每个词条内容。
+     词条文本使用zlib压缩，音频数据不压缩。
+    :param mdict_path: mdx或者mdd词典文件路径
+    :return: None
     """
-    # 确保指定的目录存在，如果不存在，则创建它
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-
-    data_path = os.path.join(directory, 'data.bin')
-    index_path = os.path.join(directory, 'index.csv')
+    base_name, extension = os.path.splitext(mdict_path)
+    if extension.lower() not in ('.mdx', '.mdd'):
+        raise ValueError('Invalid file extension: %s' % extension)
+    mdict = MDX(mdict_path) if extension.lower() == '.mdx' else MDD(mdict_path)
+    items = mdict.items()
+    data_path = '{}_{}_data.bin'.format(base_name, extension.lstrip('.'))
+    index_path = '{}_{}_index.csv'.format(base_name, extension.lstrip('.'))
 
     # 使用 'wb' 模式打开文件以确保兼容 Python 2.7 和 3.x
     with open(data_path, 'wb') as data_file, open(index_path, 'w') as index_file:
@@ -25,9 +30,9 @@ def write_indexed_data(items, directory):
         offset = 0  # 初始化偏移量
         for key, value in items:
             # 压缩值
-            compressed_value = zlib.compress(value)
-            data_file.write(compressed_value)
-            length = len(compressed_value)
+            mdict_value = zlib.compress(value) if extension.lower() == '.mdx' else value
+            data_file.write(mdict_value)
+            length = len(mdict_value)
 
             # 写入索引文件：key, 偏移量, 长度
             csv_writer.writerow([key, offset, length])
@@ -44,8 +49,7 @@ def retrieve_data_by_keys(keys, index_path):
     :return: 字典，键为索引中的键，值为一个列表，包含所有对应的值。
     """
     # 确定数据文件的路径
-    directory = os.path.dirname(index_path)
-    data_path = os.path.join(directory, 'data.bin')
+    data_path = index_path.replace("_index.csv", "_data.bin")
 
     # 读取索引文件
     index_data = []
@@ -64,8 +68,8 @@ def retrieve_data_by_keys(keys, index_path):
         for item in index_data:
             key, offset, length = item
             data_file.seek(offset)
-            compressed_value = data_file.read(length)
-            value = zlib.decompress(compressed_value).decode('utf-8')
+            mdict_value = data_file.read(length)
+            value = zlib.decompress(mdict_value).decode('utf-8') if re.search(r'_mdx_', data_path) else mdict_value
 
             if key not in results:
                 results[key] = [value]
